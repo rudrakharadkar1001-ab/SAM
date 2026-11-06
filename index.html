@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.json">
+<title>Sam - Voice Assistant</title>
+<style>
+:root{--bg:#0b1220;--card:#162038;--tx:#f1f5f9;--mu:#94a3b8;--ac:#f5b301}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font-family:system-ui,sans-serif}
+body{padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom);display:flex;flex-direction:column}
+h1{font-size:22px;margin:16px 0 0;text-align:center}
+.sub{text-align:center;color:var(--mu);margin:4px 0 12px;font-size:14px}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{flex:1;padding:10px;border:0;border-radius:10px;background:var(--card);color:var(--tx);font-size:15px}
+.tabs button.on{background:var(--ac);color:#000;font-weight:700}
+.page{display:none;flex:1;overflow-y:auto}.page.on{display:block}
+#mic{display:block;margin:20px auto;width:150px;height:150px;border-radius:50%;border:0;background:var(--ac);color:#000;font-size:56px}
+#mic.live{animation:p 1.2s infinite;background:#22c55e}
+@keyframes p{50%{box-shadow:0 0 0 22px rgba(34,197,94,.2)}}
+#status{text-align:center;font-size:18px;min-height:28px}
+#heard{background:var(--card);border-radius:12px;padding:12px;margin:14px 0;min-height:70px;color:var(--mu)}
+.help{font-size:14px;color:var(--mu);line-height:1.7}
+input{width:100%;padding:12px;margin:6px 0;border-radius:10px;border:1px solid #334155;background:var(--card);color:var(--tx);font-size:16px}
+.btn{width:100%;padding:12px;margin:6px 0;border:0;border-radius:10px;background:var(--ac);color:#000;font-size:16px;font-weight:700}
+.btn.gr{background:var(--card);color:var(--tx)}
+.row{display:flex;justify-content:space-between;align-items:center;background:var(--card);padding:10px 12px;border-radius:10px;margin:6px 0}
+.row button{background:#ef4444;border:0;color:#fff;border-radius:8px;padding:6px 10px}
+#black{display:none;position:fixed;inset:0;background:#000;z-index:99}
+#ask{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;flex-direction:column;justify-content:center;padding:24px}
+</style>
+</head>
+<body>
+<div id="black"></div>
+
+<div id="ask">
+  <h1>नमस्कार! मी Sam</h1>
+  <p class="sub">तुमचं नाव सांगा, मी तुम्हाला त्याच नावाने बोलवेन</p>
+  <input id="nm" placeholder="तुमचं नाव">
+  <button class="btn" id="go">सुरू करा</button>
+</div>
+
+<h1>Sam</h1>
+<div class="sub" id="hi"></div>
+<div class="tabs">
+  <button class="on" data-p="home">Sam</button>
+  <button data-p="cts">Contacts</button>
+  <button data-p="cmd">Commands</button>
+</div>
+
+<div class="page on" id="home">
+  <button id="mic">🎤</button>
+  <div id="status">माइक दाबा</div>
+  <div id="heard">इथे तुम्ही बोललेलं दिसेल</div>
+</div>
+
+<div class="page" id="cts">
+  <input id="cn" placeholder="नाव (उदा. Rudra, रुद्र)">
+  <input id="cp" type="tel" placeholder="नंबर (उदा. 9112811453)">
+  <button class="btn" id="add">Contact जोडा</button>
+  <button class="btn gr" id="imp">फोनमधून Contact निवडा</button>
+  <div id="list"></div>
+</div>
+
+<div class="page" id="cmd">
+  <div class="help">
+    <b>आधी "Sam" म्हणा, मग काम सांगा:</b><br>
+    • Sam Call Rudra<br>
+    • Sam Call Rudra On Speaker<br>
+    • Sam Open YouTube Shorts<br>
+    • Sam Open Tarak Mantra<br>
+    • Sam Increase Volume / Decrease Volume<br>
+    • Sam Off (स्क्रीन काळी) / On<br><br>
+    फक्त "Sam" म्हणाल तर तो उत्तर देईल आणि पुढचं काम ऐकेल.
+  </div>
+  <button class="btn gr" id="chg">माझं नाव बदला</button>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const ST={get(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let name=ST.get('name',''), contacts=ST.get('contacts',[{n:'Rudra, रुद्र',p:'9112811453'}]);
+let vol=1, listening=false, awaiting=false, speaking=false, rec=null;
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button,.page').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');$('#'+b.dataset.p).classList.add('on');
+});
+
+// ---------- Name ----------
+function showName(){$('#hi').textContent=name?('नमस्कार '+name):'';$('#ask').style.display=name?'none':'flex';}
+$('#go').onclick=()=>{const v=$('#nm').value.trim();if(!v)return;name=v;ST.set('name',name);showName();};
+$('#chg').onclick=()=>{name='';$('#nm').value='';showName();};
+showName();
+
+// ---------- Contacts ----------
+function drawList(){
+  $('#list').innerHTML='';
+  contacts.forEach((c,i)=>{
+    const d=document.createElement('div');d.className='row';
+    const s=document.createElement('span');s.textContent=c.n+' - '+c.p;
+    const b=document.createElement('button');b.textContent='X';
+    b.onclick=()=>{contacts.splice(i,1);ST.set('contacts',contacts);drawList();};
+    d.append(s,b);$('#list').append(d);
+  });
+}
+$('#add').onclick=()=>{
+  const n=$('#cn').value.trim(),p=$('#cp').value.trim();
+  if(!n||!p)return;contacts.push({n,p});ST.set('contacts',contacts);
+  $('#cn').value='';$('#cp').value='';drawList();
+};
+$('#imp').onclick=async()=>{
+  try{
+    const r=await navigator.contacts.select(['name','tel'],{multiple:true});
+    r.forEach(c=>{if(c.name&&c.name[0]&&c.tel&&c.tel[0])contacts.push({n:c.name[0],p:c.tel[0]});});
+    ST.set('contacts',contacts);drawList();
+  }catch(e){alert('या फोनवर Contact निवडणं चालत नाही. कृपया नाव आणि नंबर हाताने लिहा.');}
+};
+drawList();
+
+// ---------- Voice (male, Marathi) ----------
+let voices=[];
+function loadV(){voices=speechSynthesis.getVoices();}
+if('speechSynthesis' in window){loadV();speechSynthesis.onvoiceschanged=loadV;}
+function pickVoice(){
+  const mr=voices.filter(v=>/^mr/i.test(v.lang));
+  const hi=voices.filter(v=>/^hi/i.test(v.lang));
+  const pool=mr.length?mr:hi;
+  return pool.find(v=>/male|पुरुष/i.test(v.name)&&!/female/i.test(v.name))||pool[0]||null;
+}
+function say(t){
+  return new Promise(res=>{
+    if(!('speechSynthesis' in window)){res();return;}
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(t);
+    const v=pickVoice();if(v){u.voice=v;u.lang=v.lang;}else u.lang='mr-IN';
+    u.pitch=0.6;u.rate=0.95;u.volume=vol;
+    speaking=true;
+    u.onend=u.onerror=()=>{speaking=false;res();};
+    speechSynthesis.speak(u);
+  });
+}
+function show(t){$('#heard').textContent=t;}
+
+// ---------- Commands ----------
+const WAKE=/(^|\s)(sam|sem|saam|som|सॅम|सैम|सेम|साम)(\s|$)/i;
+function findContact(t){
+  for(const c of contacts){
+    const names=c.n.split(/[,\/]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
+    if(names.some(n=>t.includes(n)))return c;
+  }
+  return null;
+}
+async function run(t){
+  t=t.toLowerCase().trim();show('🗣 '+t);
+  const speakerWish=/speaker|स्पीकर/.test(t);
+  if(/(call|कॉल|फोन|फ़ोन|dial)/.test(t)){
+    const c=findContact(t);
+    if(!c){await say('हा contact मला सापडला नाही. Contacts मध्ये आधी जोडा.');return;}
+    await say('ठीक आहे '+name+', मी '+c.n.split(',')[0]+' ला फोन लावतो.'+(speakerWish?' फोन लागल्यावर स्पीकरचं बटण दाबा.':''));
+    location.href='tel:'+c.p.replace(/[^\d+]/g,'');
+    return;
+  }
+  if(/(shorts|शॉर्ट)/.test(t)){await say('यूट्यूब शॉर्ट्स उघडतो.');location.href='https://www.youtube.com/shorts';return;}
+  if(/(increase|वाढव|वाढ|volume up|loud)/.test(t)){vol=Math.min(1,vol+.25);await say('आवाज वाढवला. फोनचा आवाज बाजूच्या बटणाने वाढवा.');return;}
+  if(/(decrease|कमी|volume down|हळू)/.test(t)){vol=Math.max(.25,vol-.25);await say('आवाज कमी केला.');return;}
+  if(/^(off|ऑफ|बंद|स्क्रीन बंद|screen off)/.test(t)){await say('ठीक आहे, स्क्रीन बंद करतो.');$('#black').style.display='block';return;}
+  if(/^(on|ऑन|चालू|screen on)/.test(t)){$('#black').style.display='none';await say('स्क्रीन चालू केली.');return;}
+  const m=t.match(/(?:open|ओपन|उघड|उघडा|लाव|लावा|play)\s+(.+)/);
+  if(m){
+    const q=m[1].replace(/youtube|यूट्यूब|युट्यूब/g,'').trim();
+    if(!q){await say('यूट्यूब उघडतो.');location.href='https://www.youtube.com';return;}
+    await say(q+' यूट्यूबवर शोधतो.');
+    location.href='https://www.youtube.com/results?search_query='+encodeURIComponent(q);
+    return;
+  }
+  await say('माफ करा '+name+', मला हे समजलं नाही. पुन्हा सांगा.');
+}
+
+// ---------- Listening ----------
+function start(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){$('#status').textContent='या फोनवर voice चालत नाही';return;}
+  rec=new SR();rec.lang='mr-IN';rec.continuous=true;rec.interimResults=false;
+  rec.onresult=async e=>{
+    if(speaking)return;
+    const t=e.results[e.results.length-1][0].transcript.trim();
+    if(!t)return;
+    const w=WAKE.test(' '+t+' ');
+    if(w||awaiting){
+      const rest=t.replace(WAKE,' ').trim();
+      if(rest){awaiting=false;await run(rest);}
+      else{awaiting=true;show('🗣 Sam');await say('Hello '+name+', मी तुमच्या साठी काय करू शकतो?');}
+    }else show('(Sam म्हणा) '+t);
+  };
+  rec.onend=()=>{if(listening)try{rec.start()}catch(e){}};
+  rec.onerror=ev=>{if(ev.error==='not-allowed'){listening=false;stop();$('#status').textContent='माइकची परवानगी द्या';}};
+  rec.start();
+}
+function stop(){listening=false;awaiting=false;try{rec&&rec.stop()}catch(e){}$('#mic').classList.remove('live');$('#status').textContent='माइक दाबा';}
+async function keepAwake(){try{await navigator.wakeLock.request('screen')}catch(e){}}
+$('#mic').onclick=async()=>{
+  if(listening){stop();return;}
+  try{const s=await navigator.mediaDevices.getUserMedia({audio:true});s.getTracks().forEach(t=>t.stop());}
+  catch(e){$('#status').textContent='माइकची परवानगी द्या';return;}
+  listening=true;$('#mic').classList.add('live');$('#status').textContent='ऐकतोय... "Sam" म्हणा';
+  keepAwake();start();
+};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
